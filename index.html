@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K8s Capacity</title>
+  <meta name="description" content="Kubernetes capacity planning and cost for a synthetic 60 deployment cluster: bin packing and the cheapest instance mix, requests rightsizing, HPA and cluster autoscaler over a week, spot with PodDisruptionBudgets, and cost per team.">
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>K8s Capacity</h1>
+      <p class="sub">60 deployments, 8 teams, one week of usage. How many nodes does the cluster need, which instance mix is cheapest, and how much of the bill is requests nobody uses?</p>
+    </div>
+    <div class="actions">
+      <button type="button" id="share">Copy share link</button>
+      <button type="button" id="reset" class="ghost">Reset</button>
+    </div>
+  </header>
+
+  <section class="presets-wrap">
+    <div class="presets" id="presets" role="group" aria-label="Workload preset"></div>
+    <p class="hint" id="preset-note"></p>
+  </section>
+
+  <main class="layout">
+    <form id="form" class="panel" autocomplete="off"></form>
+
+    <section class="results">
+      <div class="panel rec" id="rec-panel">
+        <h2>Capacity plan</h2>
+        <p id="rec" class="rec-text"></p>
+      </div>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="panel">
+        <div class="chart-head">
+          <h2>Node packing</h2>
+          <div class="tabs" id="pack-tabs" role="tablist" aria-label="Requests">
+            <button type="button" class="tab" role="tab" data-view="current">Current requests</button>
+            <button type="button" class="tab" role="tab" data-view="rightsized">Rightsized</button>
+          </div>
+        </div>
+        <ul class="legend teams" id="team-legend"></ul>
+        <p class="hint pack-sub" id="pack-sub"></p>
+        <div class="chart-wrap"><div class="nodes" id="nodes"></div><div class="tooltip" hidden></div></div>
+        <p class="hint">Each box is a node. Squares are pods, colored by team. The two bars are requested CPU and memory against allocatable, after the kubelet, OS, and DaemonSets. A red border marks stranded capacity: one resource is nearly full, so the free part of the other cannot be used.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Packing strategy and instance mix</h2>
+        <p class="hint pack-sub" id="mix-sub"></p>
+        <div class="table-scroll">
+          <table class="items" id="mix-table">
+            <thead><tr>
+              <th>Instance mix</th>
+              <th class="num" title="Nodes with the selected strategy">Nodes</th>
+              <th class="num" title="Requested CPU and memory as a share of allocatable">CPU / mem requested</th>
+              <th class="num" title="Free CPU on memory-full nodes, and free memory on CPU-full nodes">Stranded</th>
+              <th class="num" title="Monthly on-demand cost with first fit decreasing">First fit</th>
+              <th class="num" title="Monthly on-demand cost with best fit, MostAllocated scoring">Most allocated</th>
+              <th class="num" title="Monthly on-demand cost with LeastAllocated scoring, the scheduler default">Least allocated</th>
+            </tr></thead>
+            <tbody id="mix-rows"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="mix-note"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Requests rightsizing by team</h2>
+        <div class="stats" id="rs-stats"></div>
+        <div class="table-scroll">
+          <table class="items" id="rs-table">
+            <thead><tr>
+              <th>Team</th>
+              <th class="num" title="CPU requests across every replica, in cores">CPU requested</th>
+              <th class="num" id="rs-cpu-head" title="Sum of each deployment's per-pod CPU at the percentile, times replicas">CPU p95 used</th>
+              <th class="num" title="Requested over used">Over</th>
+              <th class="num" title="Memory requests across every replica, in GiB">Memory requested</th>
+              <th class="num" title="Sum of each deployment's per-pod memory maximum, times replicas">Memory max</th>
+              <th class="num" title="Requested over used">Over</th>
+              <th class="num" title="Monthly cost by requests now and after rightsizing">Monthly, now to rightsized</th>
+            </tr></thead>
+            <tbody id="rs-rows"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="rs-note"></p>
+      </div>
+
+      <div class="panel">
+        <div class="chart-head">
+          <h2>Autoscaling over the week</h2>
+          <span class="hint tl-run" id="as-status"></span>
+        </div>
+        <p class="hint pack-sub" id="as-sub"></p>
+        <div class="table-scroll">
+          <table class="items" id="as-table">
+            <thead><tr>
+              <th>HPA target</th>
+              <th class="num" title="Pod minutes spent waiting for a node or for the container to start">Pending pod min</th>
+              <th class="num" title="Deployment minutes where use per running pod was above its CPU request">SLO risk min</th>
+              <th class="num" title="Node hours in the autoscaled pool over the week">Node hours</th>
+              <th class="num">Peak nodes</th>
+              <th class="num" title="Scale-ups and scale-downs by the cluster autoscaler">Nodes added / removed</th>
+              <th class="num" title="Whole cluster, monthly, with the other pools at a fixed size">Monthly cost</th>
+            </tr></thead>
+            <tbody id="as-rows"></tbody>
+          </table>
+        </div>
+        <div class="chart-head second"><h3>HPA replicas, all autoscaled deployments</h3></div>
+        <div class="chart-wrap"><svg id="c-rep" class="chart" role="img" aria-label="Total HPA replicas over the week"></svg><div class="tooltip" hidden></div></div>
+        <div class="chart-head second">
+          <h3>Nodes in the autoscaled pool</h3>
+          <ul class="legend"><li><i class="swatch ready"></i>Ready</li><li><i class="swatch prov"></i>Provisioning</li><li><i class="linekey dashed"></i>Static plan</li></ul>
+        </div>
+        <div class="chart-wrap"><svg id="c-nodes" class="chart" role="img" aria-label="Ready and provisioning nodes over the week"></svg><div class="tooltip" hidden></div></div>
+        <div class="chart-head second"><h3>Pending pods, peak per 15 min</h3></div>
+        <div class="chart-wrap"><svg id="c-pend" class="chart" role="img" aria-label="Pending pods over the week"></svg><div class="tooltip" hidden></div></div>
+        <p class="hint" id="as-note"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Spot for stateless workloads</h2>
+        <div class="stats" id="spot-stats"></div>
+        <div class="table-scroll">
+          <table class="items" id="spot-table">
+            <thead><tr>
+              <th>Stateless replicas on spot</th>
+              <th class="num">Spot pods</th>
+              <th class="num">Spot nodes</th>
+              <th class="num" title="Saving against the same cluster all on-demand">Saving per month</th>
+              <th class="num" title="Interruptions in the simulated week">Interruptions</th>
+              <th class="num" title="Minutes a deployment had fewer pods up than its PDB's minAvailable, with PDB-aware placement">Breach min, PDB-aware</th>
+              <th class="num" title="Same, when spot pods are packed with no per-node limit">Breach min, naive</th>
+            </tr></thead>
+            <tbody id="spot-rows"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="spot-note"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Cost by team</h2>
+        <div class="table-scroll">
+          <table class="items" id="alloc-table">
+            <thead><tr>
+              <th>Team</th>
+              <th class="num" title="Each node's price split by requested CPU and memory">By requests</th>
+              <th class="bar-col"></th>
+              <th class="num" title="Each node's price split by mean CPU and memory use">By usage</th>
+              <th class="bar-col"></th>
+            </tr></thead>
+            <tbody id="alloc-rows"></tbody>
+            <tfoot><tr><th>Cluster total</th><th class="num" id="alloc-total"></th><th></th><th class="num" id="alloc-total2"></th><th></th></tr></tfoot>
+          </table>
+        </div>
+        <p class="hint" id="alloc-note"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">Runs entirely in your browser. Settings are stored in the page URL so a scenario can be shared as a link. Synthetic workloads for made-up teams. Instance names and prices are illustrative, not a quote.</footer>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

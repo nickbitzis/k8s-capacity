@@ -1,0 +1,126 @@
+# Illustrative Karpenter NodePools for the recommended mix in the "Steady web" preset
+# (MostAllocated packing): cpu-8 for most services, with stateless pods split between
+# on-demand and spot, mem-4 for memory-heavy pods, and gpu-8 for inference.
+#
+# The instance type names come from the simulator's made-up catalog. Replace them with
+# real ones from your provider (for example a 1:2 compute family for cpu-8 and a 1:8
+# memory family for mem-4). Not applied anywhere.
+#
+# Mapping to the simulator:
+#   consolidateAfter 10m   = scale-down cooldown (scaleDownMin)
+#   WhenEmptyOrUnderutilized = remove nodes whose pods fit elsewhere
+#   capacity-type spot     = the spot panel's share of stateless replicas
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: general
+spec:
+  template:
+    metadata:
+      labels:
+        pool: general
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["cpu-8"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values: ["zone-a", "zone-b", "zone-c"]
+      expireAfter: 720h
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m
+    budgets:
+      - nodes: "10%"
+  limits:
+    cpu: "640"
+    memory: 1280Gi
+  weight: 50
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: memory
+spec:
+  template:
+    metadata:
+      labels:
+        pool: memory
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["mem-4"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      taints:
+        - key: workload/memory
+          value: "true"
+          effect: NoSchedule
+      expireAfter: 720h
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m
+  limits:
+    cpu: "96"
+    memory: 768Gi
+  weight: 10
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  template:
+    metadata:
+      labels:
+        pool: gpu
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["gpu-8"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+      expireAfter: 720h
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 10m
+  limits:
+    nvidia.com/gpu: "8"
+---
+# A PodDisruptionBudget like the ones the simulator uses for stateless services:
+# one pod down at a time, so a spot node holds at most one replica of each.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: storefront-api
+  namespace: storefront
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: storefront-api

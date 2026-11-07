@@ -1,0 +1,11 @@
+{
+  "name": "k8s-capacity",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kubernetes capacity planning and cost: bin packing, cheapest instance mix, requests rightsizing, HPA and cluster autoscaler over a week, spot with PDBs, and cost per team.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  }
+}
